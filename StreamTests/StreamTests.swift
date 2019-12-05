@@ -176,5 +176,37 @@ class StreamTests: XCTestCase {
         wait(for: [exp], timeout: 0.1)
     }
     
-
+    func testDispose() {
+        let exp = expectation(description: "")
+        
+        BasicStream<Int, Never> { send in
+            send(.completed)
+            return BlockDisposable {
+                exp.fulfill()
+            }
+        }.subscribe()
+        
+        wait(for: [exp], timeout: 0.1)
+    }
+    
+    func testValueAfterDispose() {
+        let exp = expectation(description: "")
+        
+        BasicStream<Int, Never> { send in
+            Timer.scheduledTimer(withTimeInterval: 0.01, repeats: false) { _ in
+                send(.value(1))
+                send(.completed)
+            }
+            return nil
+        }.subscribe { event in
+            switch event {
+            case .value, .completed, .failed:
+                XCTFail()
+            case .disposed:
+                exp.fulfill()
+            }
+        }?.dispose()
+        
+        wait(for: [exp], timeout: 0.1)
+    }
 }

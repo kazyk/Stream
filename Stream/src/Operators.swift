@@ -30,7 +30,6 @@ extension Stream {
     }
 }
 
-
 extension Streams {
     struct Collect<Source: Stream>: Stream {
         typealias Value = [Source.Value]
@@ -63,5 +62,30 @@ extension Streams {
 extension Stream {
     func collect() -> Streams.Collect<Self> {
         return Streams.Collect(source: self)
+    }
+}
+
+extension Stream {
+    func flatMap<S: Stream>(_ transform: @escaping (Value) -> S) -> AnyStream<S.Value, Error> where S.Error == Self.Error {
+        return AnyStream { send in
+            let disposable = CompositeDisposable()
+            
+            let streamDisposable = self.subscribe { (event) in
+                switch event {
+                case .value(let val):
+                    let stream = transform(val)
+                    disposable.add(stream.subscribe(AnySubscriber(onEvent: send)))
+                case .failed(let err):
+                    send(.failed(err))
+                case .completed:
+                    send(.completed)
+                case .disposed:
+                    send(.disposed)
+                }
+            }
+            
+            disposable.add(streamDisposable)
+            return disposable
+        }
     }
 }

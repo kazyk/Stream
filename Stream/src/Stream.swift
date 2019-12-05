@@ -47,7 +47,7 @@ protocol Disposable {
 }
 
 class DisposableBase: Disposable {
-    private var disposed = false
+    private(set) var disposed = false
     
     func disposeImpl() {
     }
@@ -72,11 +72,18 @@ final class BlockDisposable: DisposableBase {
     }
 }
 
-final class SerialDisposable: DisposableBase {
-    private let disposables: [Disposable]
+final class CompositeDisposable: DisposableBase {
+    private var disposables: [Disposable] = []
     
-    init(_ disposables: [Disposable?] = []) {
-        self.disposables = disposables.compactMap({ d in d })
+    func add(_ disposable: Disposable?) {
+        guard let disposable = disposable else {
+            return
+        }
+        if disposed {
+            disposable.dispose()
+        } else {
+            disposables.append(disposable)
+        }
     }
     
     override func disposeImpl() {
@@ -97,16 +104,31 @@ final class Subscription<S: Subscriber>: Subscriber, Disposable {
     func send(_ event: StreamEvent<S.Value, S.Error>) {
         subscriber?.send(event)
         switch event {
-        case .completed, .failed:
+        case .completed, .failed, .disposed:
             subscriber = nil
+            dispose()
         default:
             break
         }
     }
     
+    var streamDisposable: Disposable? {
+        didSet {
+            if disposed, let dispo = streamDisposable {
+                dispo.dispose()
+                streamDisposable = nil
+            }
+        }
+    }
+    
     func dispose() {
-        subscriber?.send(.disposed)
-        subscriber = nil
+        if !disposed {
+            subscriber?.send(.disposed)
+            subscriber = nil
+            streamDisposable?.dispose()
+            streamDisposable = nil
+            disposed = true
+        }
     }
 }
 
@@ -120,6 +142,11 @@ protocol Stream {
 }
 
 extension Stream {
+    @discardableResult
+    func subscribe(_ onEvent: @escaping (StreamEvent<Value, Error>) -> Void) -> Disposable? {
+        return self.subscribe(AnySubscriber(onEvent: onEvent))
+    }
+    
     @discardableResult
     func subscribe(value: ((Value) -> Void)? = nil, failed: ((Error) -> Void)? = nil, completed: (() -> Void)? = nil, disposed: (() -> Void)? = nil) -> Disposable? {
         return self.subscribe(AnySubscriber { event in
@@ -147,16 +174,23 @@ extension Stream {
 
 struct BasicStream<Value, Error: Swift.Error>: Stream {
     typealias OnEvent = (StreamEvent<Value, Error>) -> Void
-    var onSubscribe: (@escaping OnEvent) -> Disposable?
+    var startStream: (@escaping OnEvent) -> Disposable?
     
     @discardableResult
     func subscribe<S>(_ subscriber: S) -> Disposable? where S : Subscriber, Error == S.Error, Value == S.Value {
         let sub = Subscription(subscriber: subscriber)
-        let dispo = onSubscribe(sub.send)
-        return BlockDisposable {
-            sub.dispose()
-            dispo?.dispose()
-        }
+        sub.streamDisposable = startStream(sub.send)
+        return sub
+    }
+}
+
+struct AnyStream<Value, Error: Swift.Error>: Stream {
+    typealias OnEvent = (StreamEvent<Value, Error>) -> Void
+    var startStream: (@escaping OnEvent) -> Disposable?
+    
+    @discardableResult
+    func subscribe<S>(_ subscriber: S) -> Disposable? where S : Subscriber, Error == S.Error, Value == S.Value {
+        return startStream(subscriber.send)
     }
 }
 
