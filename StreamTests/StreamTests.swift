@@ -20,20 +20,23 @@ class StreamTests: XCTestCase {
     }
 
     func testJust() {
-        let exp = expectation(description: "")
+        let valexp = expectation(description: "value")
+        let compexp = expectation(description: "completed")
         let sub = AnySubscriber<Int, Never> { e in
             switch e {
             case .value(let val):
-                XCTAssertEqual(val, 100)
+                if val == 100 {
+                    valexp.fulfill()
+                }
             case .completed:
-                exp.fulfill()
+                compexp.fulfill()
             default:
                 XCTFail()
             }
         }
         
         Streams.Just(value: 100).subscribe(sub)
-        wait(for: [exp], timeout: 0.1)
+        wait(for: [valexp, compexp], timeout: 0.1, enforceOrder: true)
     }
 
     func testSequential() {
